@@ -36,6 +36,9 @@ export default tseslint.config(
       "test-results",
       "playwright-report",
       "src/routeTree.gen.ts",
+      // orval output (npm run api:generate) — regenerated, never edited, and
+      // checked for drift by `npm run api:check` instead.
+      "src/services/api/generated",
     ],
   },
   js.configs.recommended,
@@ -117,7 +120,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ["vite.config.ts", "vitest.config.ts", "playwright.config.ts"],
+    files: [
+      "vite.config.ts",
+      "vitest.config.ts",
+      "playwright.config.ts",
+      "orval.config.ts",
+      ".railway/railway.ts",
+    ],
     languageOptions: {
       globals: globals.node,
     },

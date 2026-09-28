@@ -67,6 +67,10 @@ jobs:
       # typechecked too.
       - run: npm run typecheck
 
+      # The client in src/services/api/generated must be exactly what orval
+      # produces from the committed openapi.json.
+      - run: npm run api:check
+
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -154,6 +158,16 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm ci --no-audit --no-fund
         working-directory: backend-repo
+
+      # The client was generated from this repo's copy of the backend's
+      # OpenAPI spec; if the paired backend now serves a different one, the
+      # client is out of date — fail before spending minutes on e2e.
+      - name: Check the API contract matches the paired backend
+        run: |
+          if ! diff -u backend-repo/openapi.json openapi.json; then
+            echo "::error title=API contract drift::openapi.json differs from ${BACKEND_REPOSITORY}'s. Run 'npm run api:generate' (backend checked out next to this repo) and commit the result."
+            exit 1
+          fi
 
       - id: playwright-version
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"

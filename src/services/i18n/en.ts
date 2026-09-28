@@ -13,4 +13,8 @@ export const en = {
     title: "Page not found",
     back: "Back to home",
   },
+  error: {
+    title: "Something went wrong",
+    retry: "Try again",
+  },
 };

@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { healthQueryOptions } from "@/services/api/health";
+import { useHealthCheck } from "@/services/api/generated/health/health";
 
 /**
  * Whether the SPA can reach its API. The smallest real round trip between the
@@ -10,7 +9,7 @@ import { healthQueryOptions } from "@/services/api/health";
  */
 export function HealthCard() {
   const { t } = useTranslation();
-  const { data, isPending, isError } = useQuery(healthQueryOptions);
+  const { data, isPending, isError } = useHealthCheck();
 
   return (
     <Card className="w-full max-w-sm">

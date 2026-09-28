@@ -30,7 +30,10 @@ describe("HealthCard", () => {
     renderCard();
 
     expect(await screen.findByTestId("health-ok")).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/health");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/health",
+      expect.objectContaining({ method: "GET" }),
+    );
   });
 
   it("reports a reachable API with its status", async () => {
@@ -50,7 +53,14 @@ describe("HealthCard", () => {
   it("reports an unreachable API when the check fails", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(null, { status: 503 })),
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json(
+            { statusCode: 503, error: "Service Unavailable", status: "error" },
+            { status: 503 },
+          ),
+        ),
     );
 
     renderCard();
