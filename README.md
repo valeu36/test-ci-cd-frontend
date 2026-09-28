@@ -54,11 +54,17 @@ else the same-named branch, else `main`.
 ## Railway (CD)
 
 A **web** service in the same Railway project as the api, linked to this repo,
-branch `main`, **Wait for CI on**. `railway.json` builds the `Dockerfile` (node
-build → nginx with SPA fallback, listening on Railway's `PORT`). Set on the web
-service:
+branch `main`, **Wait for CI on**. Railway builds the `Dockerfile` at the repo
+root (node build → nginx with SPA fallback, listening on Railway's `PORT`).
 
-- `VITE_API_URL=https://${{api.RAILWAY_PUBLIC_DOMAIN}}/api` — baked in at build
-  time, passed to the Docker build as a build arg.
+These live in the Railway service settings, not in this repo — Railway no
+longer accepts `railway.json` for new services:
+
+| Setting        | Value                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------- |
+| Healthcheck    | `/`, 60s timeout                                                                             |
+| Restart policy | on failure, 5 retries                                                                        |
+| `PORT`         | `8080`                                                                                       |
+| `VITE_API_URL` | `https://${{api.RAILWAY_PUBLIC_DOMAIN}}/api` — baked in at build time, as a Docker build arg |
 
 …and add the web service's domain to the api's `CORS_ORIGINS`.
