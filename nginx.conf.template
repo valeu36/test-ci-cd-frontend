@@ -1,0 +1,23 @@
+# Rendered by the nginx image's entrypoint (envsubst over /etc/nginx/templates)
+# at container start, so `listen` picks up the PORT Railway injects.
+server {
+    listen ${PORT};
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Hashed build output never changes under the same name.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback: every client-side route serves index.html, never cached so
+    # a deploy is picked up on the next navigation.
+    location / {
+        add_header Cache-Control "no-cache";
+        try_files $uri $uri/ /index.html;
+    }
+}

@@ -1,0 +1,205 @@
+name: CI
+
+# The quality gate every change merges through.
+#
+# Deployment is NOT here. Railway's GitHub integration deploys `main` with
+# "Wait for CI" on, so a merged commit only ships once this workflow's run on
+# it passes — which is why the `push: main` trigger must stay.
+#
+# The e2e job runs the whole Playwright suite against an actual backend,
+# checked out from the backend repo (Docker Postgres + migrations, all
+# orchestrated by that repo's `npm run e2e:serve`). There is no mocked variant.
+#
+# Which backend commit that is gets resolved per run rather than pinned to
+# main, because a feature usually spans both repos. See
+# ./.github/actions/resolve-paired-ref for the rules. Leaning on an unmerged
+# backend branch only warns — merge order (backend first) is a convention.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      backend_ref:
+        description: "Backend branch to test against. Blank auto-resolves (same-name branch, else main)."
+        required: false
+        default: ""
+
+permissions:
+  contents: read # least privilege; no job writes to the repo
+
+# A new push to a PR makes the in-flight run obsolete. Runs on main are never
+# cancelled — Railway's "Wait for CI" needs every main commit's verdict.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # The sibling repository. Override with a repository variable if it is not
+  # <this owner>/test-ci-cd-backend.
+  BACKEND_REPOSITORY: ${{ vars.BACKEND_REPOSITORY || format('{0}/test-ci-cd-backend', github.repository_owner) }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      - run: npm run lint
+
+      # A separate gate: ESLint passes code that prettier fails.
+      - run: npm run format:check
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # `tsc -b` walks all three project references — tsconfig.app (src),
+      # tsconfig.node (the config files) and e2e/tsconfig — so the specs are
+      # typechecked too.
+      - run: npm run typecheck
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    # Headroom on purpose: Routa's unit job crept up to 8 of its 10 minutes
+    # before anyone noticed. If this one grows past ~5, find out why.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # Vitest enables its github-actions reporter automatically under
+      # GITHUB_ACTIONS, so failures land as inline annotations on the diff.
+      - run: npm test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+
+      # Overlaps the typecheck job (`build` is `tsc -b && vite build`) on
+      # purpose: a type error then fails in seconds under an unambiguous label
+      # instead of inside a build log.
+      - run: npm run build
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  e2e:
+    name: E2E tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read # to read the `Backend-Ref:` trailer out of the PR body
+    steps:
+      - uses: actions/checkout@v7
+
+      # Which backend commit this run pairs with, and whether it is already on
+      # backend main. Resolved here rather than in a job of its own: it is
+      # three API calls, not worth a runner spin-up.
+      - id: resolve
+        uses: ./.github/actions/resolve-paired-ref
+        with:
+          repository: ${{ env.BACKEND_REPOSITORY }}
+          trailer-key: Backend-Ref
+          token-secret-name: BACKEND_REPO_TOKEN
+          # Deliberately not `|| github.token` — the action can only tell "no
+          # PAT configured" from "the PAT is wrong" if it sees the difference.
+          token: ${{ secrets.BACKEND_REPO_TOKEN }}
+          dispatch-ref: ${{ inputs.backend_ref }}
+
+      - if: steps.resolve.outputs.merged != 'true'
+        env:
+          REF: ${{ steps.resolve.outputs.ref }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          echo "::warning title=Backend not merged::E2E runs against ${BACKEND_REPOSITORY}@$REF (${SHA:0:7}), which is not on backend main. Merge the backend PR first, then re-run — merging this one now leaves main broken until it lands."
+
+      # By SHA, not by branch: the branch could move mid-run, and a run that
+      # says which commit it tested is the one you can reproduce. Checked out
+      # BEFORE setup-node so its cache key can cover this lockfile too.
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.BACKEND_REPOSITORY }}
+          ref: ${{ steps.resolve.outputs.sha }}
+          path: backend-repo
+          token: ${{ secrets.BACKEND_REPO_TOKEN || github.token }}
+
+      # One Node for both checkouts, and deliberately NOT ./.github/actions/setup:
+      # that composite keys the npm cache on a single lockfile.
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend-repo/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm ci --no-audit --no-fund
+        working-directory: backend-repo
+
+      - id: playwright-version
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - id: playwright-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
+
+      # No `install-deps` on a cache hit: the ubuntu-latest image already ships
+      # the shared libraries. If a browser ever fails to launch with a missing
+      # .so, add `npx playwright install-deps chromium` here.
+      - if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+
+      # The Playwright webServer invokes `npm --prefix $E2E_BACKEND_DIR run
+      # e2e:serve`, which provisions .env.testing, the Docker Postgres (tmpfs)
+      # and migrations, then serves the API.
+      - run: npm run test:e2e
+        env:
+          E2E_BACKEND_DIR: ${{ github.workspace }}/backend-repo
+
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-failures
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # One check to require in branch protection, so adding a job later does not
+  # mean editing the protection rule.
+  ci:
+    name: CI
+    if: always()
+    needs: [lint, typecheck, unit, build, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1

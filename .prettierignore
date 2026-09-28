@@ -1,0 +1,10 @@
+dist
+coverage
+package-lock.json
+src/routeTree.gen.ts
+test-results
+playwright-report
+
+# Byte-identical in both repos, whose prettier configs differ — a plain
+# diff between the two copies must stay empty.
+.github/actions/resolve-paired-ref/

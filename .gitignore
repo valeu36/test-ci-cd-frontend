@@ -1,0 +1,31 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+coverage
+
+# TanStack Router plugin cache
+.tanstack
+
+# Playwright
+test-results
+playwright-report
+blob-report
+playwright/.cache
+
+# Local env — the *.example file is committed, real values are not.
+.env
+.env.*
+!.env.example
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.sw?
